@@ -2,28 +2,10 @@
 
 # API 请求相关设置
 api_settings:
-  # 最大并发请求数 (用于测试、更新、启用等批量操作)
-  # 设为 5 可以减少对本地 API 的压力，避免潜在死锁
-  max_concurrent_requests: 1 # 降低并发数以避免 429 错误
-
-  # API 请求默认超时时间 (秒)
+  max_concurrent_requests: 5
   request_timeout: 60
-
-# 两次 API 请求之间的最小间隔时间 (毫秒)。设置为 0 表示不等待。
-  # 用于避免触发目标 API 的速率限制。
   request_interval_ms: 100
-  # 重试次数 (暂未实现从配置读取，保留为 TODO)
-  # retry_times: 3
-  # 重试退避因子 (暂未实现从配置读取，保留为 TODO)
-  # retry_backoff_factor: 0.5
 
 # API 分页大小设置
-# 用于控制从 One API 实例获取渠道列表时，每页请求的条目数量。
-# 更大的分页大小可以减少 API 请求次数，提高获取大量渠道时的效率。
-# 请根据你的 One API 实例版本和支持的最大分页大小进行设置。
-# newapi (较新版本) 支持: 10, 20, 50, 100 (默认 100)
-# voapi (较旧版本) 支持: 10, 20, 40, 100 (默认 100)
 api_page_sizes:
-  newapi: 20 # 减小分页大小以尝试避免 429 错误
-
-# (测试相关设置已移除，测试模型由渠道配置或模型列表决定)
+  newapi: 100

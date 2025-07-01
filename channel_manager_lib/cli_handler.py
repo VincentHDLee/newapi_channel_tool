@@ -501,7 +501,7 @@ async def main_cli_entry(args):
 
                 while True:
                     try:
-                        choice = input("请选择操作: [1] 查询所有渠道 [2] 执行新更新 [3] 撤销上次操作 [4] 测试并启用自动禁用的渠道 [5] 测试指定渠道的特定模型 [0] 退出: ")
+                        choice = input("请选择操作: [1] 根据 query_config.yaml 查询渠道 [2] 根据 update_config.yaml 更新渠道 [3] 撤销上次操作 (使用 undo_...json) [4] 测试并启用自动禁用的渠道 [5] 根据 channel_model_test_config.yaml 测试模型 [0] 退出: ")
                         if choice == '1': action_to_perform = 'query_all'; break
                         elif choice == '2': action_to_perform = 'update'; break
                         elif choice == '3': action_to_perform = 'undo'; break
@@ -515,7 +515,7 @@ async def main_cli_entry(args):
                 # 在没有撤销文件时，提供查询和更新选项
                 while True:
                     try:
-                        choice = input("请选择操作: [1] 查询所有渠道 [2] 执行新更新 [3] 测试并启用自动禁用的渠道 [4] 测试指定渠道的特定模型 [0] 退出: ")
+                        choice = input("请选择操作: [1] 根据 query_config.yaml 查询渠道 [2] 根据 update_config.yaml 更新渠道 [3] 测试并启用自动禁用的渠道 [4] 根据 channel_model_test_config.yaml 测试模型 [0] 退出: ")
                         if choice == '1': action_to_perform = 'query_all'; break
                         elif choice == '2': action_to_perform = 'update'; break
                         elif choice == '3': action_to_perform = 'test_and_enable'; break # 动作名不变

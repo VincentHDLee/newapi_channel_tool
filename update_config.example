@@ -4,10 +4,9 @@
 # ========================
 
 # 筛选条件: 用于选择要执行更新操作的目标渠道。
-# 注意: 所有启用的筛选器都会生效。
 filters:
   # (常用) 按名称部分匹配。例如，更新所有名称包含 "Azure" 的渠道。
-  name_filters: ["Azure"]
+  name_filters: ["PaidGemini"]
 
   # (常用) 按分组完全匹配。例如，更新所有属于 "default" 分组的渠道。
   # group_filters: ["default"]
@@ -25,35 +24,69 @@ filters:
   # exclude_name_filters: ["_bak", "_test"]
 
 
+# ====================================================================
 # 要应用的更新: 只有 enabled 设置为 true 的项才会被应用。
+#
+# 支持两种配置格式:
+# 1. 标准格式 (推荐): 使用 'mode' 和 'value' 键，清晰明了。
+#    models:
+#      enabled: true
+#      mode: "append"
+#      value: ["gpt-4-turbo"]
+#
+# 2. 快捷格式 (兼容): 直接使用操作模式作为键，更简洁。
+#    models:
+#      enabled: true
+#      append: ["gpt-4-turbo"]
+# ====================================================================
 updates:
-  # 示例1：批量追加模型到现有列表
+  # --- 示例 1: 更新模型列表 (models) ---
   models:
     enabled: false # 设置为 true 以启用此更新
-    mode: "append" # 追加模式
-    value: ["gpt-4-turbo", "gpt-4o"]
 
-  # 示例2：批量覆盖分组设置
+    # (A) 追加模型到现有列表 (推荐使用快捷格式)
+    append: ["gpt-4-turbo", "gpt-4o"]
+
+    # (B) 从列表中移除指定模型
+    # remove: ["gpt-3.5-turbo"]
+
+    # (C) 完全覆盖模型列表
+    # overwrite: ["gpt-4-vision-preview"]
+
+    # (D) 使用正则表达式替换模型名称。
+    # 特别注意：当用于 "models" 字段时，此模式有增强功能。
+    # regex_replace:
+    #   # value 应为一个规则列表，每个规则包含 "pattern" 和 "replacement"。
+    #   # 工具会按顺序将 *所有规则* 应用于 models 列表中的 *每个模型*。
+    #   # 所有替换完成后，最终的 models 列表会自动去重，保留顺序。
+    #   - pattern: "gemini-pro-vision" # 规则1: 将旧版视觉模型改名
+    #     replacement: "gemini-1.0-pro-vision"
+    #   - pattern: "gemini-1.5-pro-preview.*" # 规则2: 将所有 1.5 preview 版本统一为 latest
+    #     replacement: "gemini-1.5-pro-latest"
+    #   - pattern: "gemini-1.5-flash-preview.*" # 规则3: 将所有 1.5 flash preview 版本统一为 latest
+    #     replacement: "gemini-1.5-flash-latest"
+
+  # --- 示例 2: 更新分组 (group) ---
   group:
     enabled: false
-    mode: "overwrite" # 覆盖模式
-    value: ["vip"] # 目标渠道的分组将被设置为 "vip"
+    # 对于简单字段，可以直接赋值，等同于 "overwrite"
+    value: "default"
 
-  # 示例3：批量更新模型映射 (合并模式)
+  # --- 示例 3: 更新模型映射 (model_mapping) ---
   model_mapping:
     enabled: false
-    mode: "merge" # 合并模式：添加或更新键值对，不影响已有映射
+    # 合并模式：添加或更新键值对，不影响已有映射
+    mode: "merge"
     value:
       gpt-3.5-turbo: gpt-4 # 将 gpt-3.5-turbo 请求重定向到 gpt-4
       
-  # 示例4：批量更新优先级
+  # --- 示例 4: 批量更新优先级 ---
   priority:
     enabled: false
-    mode: "overwrite"
+    # 简单字段可以直接赋值 (等同于 overwrite)
     value: 10 # 数字越小，优先级越高
 
-  # 示例5：批量启用渠道
+  # --- 示例 5: 批量启用/禁用渠道 ---
   status:
     enabled: false
-    mode: "overwrite"
     value: 1 # 1: 启用, 2: 手动禁用

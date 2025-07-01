@@ -1,47 +1,62 @@
-# cross_site_action.yaml
-# 用于定义跨站点操作的配置
+# cross_site_action.example
+# =========================
+# 用于配置跨 One API 实例的渠道操作。
+# 核心用例：将一个源渠道的配置（如模型列表）批量复制到另一个实例中的多个目标渠道。
+# =========================
 
-# 要执行的操作
-# "compare_channel_counts": 比较源和目标站点的渠道总数
-# "compare_fields": 比较源和目标渠道的指定字段
-# "copy_fields": 将源渠道的指定字段复制到目标渠道
-action: "compare_fields"
+# 1. 动作定义
+# (必需) 指定要执行的动作类型。
+# 可用动作:
+#   - copy_fields: 将源渠道的指定字段值（根据模式）复制到目标渠道。这是最常用的功能。
+#   - compare_fields: 比较源和目标渠道指定字段的值，不修改任何渠道。
+#   - compare_channel_counts: (无需额外参数) 仅比较源和目标站点的渠道总数。
+action: "copy_fields"
 
-# 源站点配置
+# 2. 源实例配置
 source:
-  # 连接配置文件路径
-  connection_config: "connection_configs/astaur_api.yaml"
-  # 渠道筛选器
+  # (必需) 源实例的连接配置文件路径 (相对于项目根目录)。
+  connection_config: "connection_configs/source_instance.yaml"
+  # (必需) 源渠道筛选器。必须确保筛选条件足够精确，仅匹配 *唯一一个* 渠道作为模板。
   channel_filter:
-    # 筛选器逻辑与 query_config.yaml 中的 filters 部分相同
-    match_mode: "exact"
-    name_filters: ["FreeGemini"]
+    name_filters: ["My-Template-Channel-Name"]
+    # 也可以使用其他过滤器组合来精确定位，例如:
+    # id_filters: [123] # 如果知道ID，这是最精确的方式
 
-# 目标站点配置
+# 3. 目标实例配置
 target:
-  # 连接配置文件路径
-  connection_config: "connection_configs/sucoi_api.yaml"
-  # 渠道筛选器
+  # (必需) 目标实例的连接配置文件路径。
+  connection_config: "connection_configs/target_instance.yaml"
+  # (必需) 目标渠道筛选器。可以匹配 *一个或多个* 渠道。
   channel_filter:
-    match_mode: "exact"
-    name_filters: ["FreeGemini"]
+    # 示例：匹配所有名称包含 "Gemini" 且属于 "default" 分组的渠道
+    name_filters: ["Gemini"]
+    group_filters: ["default"]
 
-# "copy_fields" 操作的参数
+# 4. 操作特定参数 for action: "copy_fields"
+# (如果 action 设置为 "copy_fields", 则需要配置此部分)
 copy_fields_params:
-  # 要复制的字段列表
+  # (必需) 要从源复制到目标的字段列表。不允许 "id" 和 "key"。
   fields_to_copy:
-    - "models"
-    - "group"
-  # 复制模式
-  # "overwrite": (默认) 覆盖目标字段
-  # "append": 将源字段的值附加到目标字段（适用于列表）
-  # "remove": 从目标字段中移除源字段的值（适用于列表）
-  # "merge": 合并源和目标字典（适用于字典）
-  # "delete_keys": 从目标字典中删除源字段中指定的键（适用于字典）
+    - models
+    - model_mapping
+    - group
+    - priority
+    - weight
+    - base_url
+    - setting
+  # (可选, 默认 "overwrite") 复制模式。
+  # - 对于列表字段 (models, group, tag): 支持 "overwrite", "append", "remove"
+  # - 对于字典字段 (model_mapping, setting, etc.): 支持 "overwrite", "merge", "delete_keys"
+  # - 对于其他简单字段: 仅支持 "overwrite"
   copy_mode: "overwrite"
 
-# "compare_fields" 操作的参数
-compare_fields_params:
-  # 要比较的字段列表
-  fields_to_compare:
-    - "models"
+# == 示例：参数 for action: "compare_fields" ==
+# (如果 action 设置为 "compare_fields", 则需要配置此部分)
+# compare_fields_params:
+#   # (必需) 要比较值的字段名称列表。
+#   fields_to_compare:
+#     - models
+#     - group
+#     - base_url
+#     - priority
+#     - model_mapping

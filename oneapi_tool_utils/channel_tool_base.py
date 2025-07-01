@@ -229,8 +229,47 @@ class ChannelToolBase(abc.ABC):
 
             # --- 获取原始值和配置值 ---
             original_value = original_channel_data.get(field)
-            update_value = config.get("value") # Value 可能为 None 或缺失，看模式处理
-            mode = config.get("mode", "overwrite") # 默认为覆盖模式
+            
+            # --- 智能获取 mode 和 update_value ---
+            mode = config.get("mode")
+            update_value = config.get("value")
+
+            if mode is None:
+                # 如果未明确指定 mode，则从配置键中推断
+                possible_modes = ["overwrite", "append", "remove", "merge", "delete_keys", "regex_replace"]
+                found_modes = [m for m in possible_modes if m in config]
+                if len(found_modes) == 1:
+                    mode = found_modes[0]
+                    # 对于 regex_replace，其值是整个配置字典
+                    if mode == "regex_replace":
+                        update_value = config
+                    else:
+                        update_value = config.get(mode)
+                elif len(found_modes) > 1:
+                    logging.warning(f"渠道 {channel_name} 的字段 '{field}' 配置了多个冲突的操作模式: {found_modes}。跳过此字段。")
+                    continue
+                else:
+                    # 如果没有找到任何有效模式键，则默认为 overwrite
+                    mode = "overwrite"
+                    # 检查顶层是否有 'value'，否则认为整个 config 就是 value (用于简单赋值)
+                    if 'value' in config:
+                        update_value = config.get('value')
+                    elif 'enabled' in config and len(config) == 2: # 兼容 enabled: true, value: xxx 的简单情况
+                         pass # update_value 已经被 get("value") 获取
+                    elif 'enabled' in config and len(config) > 1: # 兼容 enabled: true, 和其他模式键
+                         pass
+                    else: # 兼容直接写值的情况，例如: priority: 10
+                         # 此时 config 就是值本身，但循环结构要求它是字典，这种情况不应该发生
+                         # 但为了健壮性，我们假设它可能发生，并记录一个警告
+                         logging.warning(f"渠道 {channel_name} 的字段 '{field}' 配置格式不标准，将尝试按值处理。配置: {config}")
+                         # 在这种情况下，我们无法确定 update_value，所以跳过
+                         continue
+
+
+            # 检查 update_value 是否获取成功 (对于需要值的模式)
+            if update_value is None and mode not in ["delete_keys"]:
+                logging.warning(f"渠道 {channel_name} 的字段 '{field}' (模式: {mode}) 配置不正确：缺少 'value' 或与模式同名的键。跳过此字段。")
+                continue
 
             new_value = None # 初始化新值
 
@@ -246,17 +285,44 @@ class ChannelToolBase(abc.ABC):
                     else:
                         new_value = update_value # 其他类型直接赋值
 
-                # 模式 2: regex_replace (仅适用于字符串字段)
+                # 模式 2: regex_replace (支持字符串和 models 列表)
                 elif mode == "regex_replace":
-                    if isinstance(original_value, str) and isinstance(update_value, dict) and \
+                    # 分支 A: 处理 models 列表的批量替换
+                    if field == "models" and isinstance(update_value, list):
+                        # 1. 规范化原始模型列表
+                        original_list = []
+                        if isinstance(original_value, str):
+                            original_list = [m.strip() for m in original_value.split(',') if m.strip()]
+                        elif isinstance(original_value, list):
+                            original_list = [str(m).strip() for m in original_value if str(m).strip()]
+                        
+                        # 2. 应用所有替换规则
+                        processed_list = original_list
+                        for rule in update_value:
+                            if isinstance(rule, dict) and 'pattern' in rule and 'replacement' in rule:
+                                try:
+                                    # 对列表中的每个元素应用替换
+                                    processed_list = [re.sub(rule['pattern'], rule['replacement'], model) for model in processed_list]
+                                except re.error as re_err:
+                                    logging.warning(f"渠道 {channel_name} 的字段 '{field}' 正则替换规则无效: {rule} ({re_err})。跳过此规则。")
+                                    continue
+                        
+                        # 3. 去重 (保持顺序)
+                        final_list = list(dict.fromkeys(processed_list))
+                        
+                        # 4. 格式化
+                        new_value = self.format_list_field_for_api(field, final_list)
+
+                    # 分支 B: 处理通用字符串字段的替换
+                    elif isinstance(original_value, str) and isinstance(update_value, dict) and \
                        'pattern' in update_value and 'replacement' in update_value:
                         try:
                             new_value = re.sub(update_value['pattern'], update_value['replacement'], original_value)
                         except re.error as re_err:
                             logging.warning(f"渠道 {channel_name} 的字段 '{field}' 正则替换失败: 无效模式 '{update_value['pattern']}' 或替换 '{update_value['replacement']}' ({re_err})。跳过此字段。")
-                            continue # 跳过这个字段的更新
+                            continue
                     else:
-                        logging.warning(f"渠道 {channel_name} 的字段 '{field}' 使用 regex_replace 模式，但原始值非字符串或配置值格式错误。跳过此字段。")
+                        logging.warning(f"渠道 {channel_name} 的字段 '{field}' 使用 regex_replace 模式，但原始值或配置值格式不支持。跳过此字段。")
                         continue
 
                 # 模式 3: append (适用于列表/集合字段)

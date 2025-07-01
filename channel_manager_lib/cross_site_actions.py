@@ -293,11 +293,9 @@ async def execute_copy_fields(
         if original_targets_for_undo:
             try:
                 target_config_name = target_config_path.stem
-                target_api_type = target_tool.get_api_type()
-                logging.info(f"尝试为目标站点 '{target_config_path.stem}' (类型: {target_api_type}) 保存 {len(original_targets_for_undo)} 条撤销数据...")
+                logging.info(f"尝试为目标站点 '{target_config_path.stem}' 保存 {len(original_targets_for_undo)} 条撤销数据...")
                 # 调用更新后的 save_undo_data，直接传递预取的数据
                 await save_undo_data(
-                    api_type=target_api_type,
                     api_config_path=target_config_path, # 传递完整的路径
                     channels_to_save=original_targets_for_undo
                 )
