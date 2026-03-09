@@ -227,204 +227,151 @@ class ChannelToolBase(abc.ABC):
             if not isinstance(config, dict) or config.get("enabled") is not True:
                 continue # 跳过未启用或格式错误的更新
 
-            # --- 获取原始值和配置值 ---
+            # --- 获取原始值 ---
             original_value = original_channel_data.get(field)
             
-            # --- 智能获取 mode 和 update_value ---
-            mode = config.get("mode")
-            update_value = config.get("value")
-
-            if mode is None:
-                # 如果未明确指定 mode，则从配置键中推断
-                possible_modes = ["overwrite", "append", "remove", "merge", "delete_keys", "regex_replace"]
-                found_modes = [m for m in possible_modes if m in config]
-                if len(found_modes) == 1:
-                    mode = found_modes[0]
-                    # 对于 regex_replace，其值是整个配置字典
-                    if mode == "regex_replace":
-                        update_value = config
-                    else:
-                        update_value = config.get(mode)
-                elif len(found_modes) > 1:
-                    logging.warning(f"渠道 {channel_name} 的字段 '{field}' 配置了多个冲突的操作模式: {found_modes}。跳过此字段。")
+            # --- 智能获取模式列表 ---
+            # 支持同时配置多个模式，例如同时 append 和 regex_replace
+            possible_modes = ["overwrite", "append", "remove", "merge", "delete_keys", "regex_replace"]
+            
+            # 确定要执行的任务序列
+            tasks = [] # 存储 (mode, value) 元组
+            
+            if config.get("mode"):
+                # 标准格式: {mode: "append", value: [...]}
+                tasks.append((config.get("mode"), config.get("value")))
+            else:
+                # 快捷格式: {append: [...], regex_replace: [...]}
+                for m in possible_modes:
+                    if m in config:
+                        val = config.get(m)
+                        tasks.append((m, val))
+            
+            # 如果没有任何模式，尝试默认 overwrite
+            if not tasks:
+                if 'value' in config:
+                    tasks.append(("overwrite", config.get('value')))
+                else:
                     continue
-                else:
-                    # 如果没有找到任何有效模式键，则默认为 overwrite
-                    mode = "overwrite"
-                    # 检查顶层是否有 'value'，否则认为整个 config 就是 value (用于简单赋值)
-                    if 'value' in config:
-                        update_value = config.get('value')
-                    elif 'enabled' in config and len(config) == 2: # 兼容 enabled: true, value: xxx 的简单情况
-                         pass # update_value 已经被 get("value") 获取
-                    elif 'enabled' in config and len(config) > 1: # 兼容 enabled: true, 和其他模式键
-                         pass
-                    else: # 兼容直接写值的情况，例如: priority: 10
-                         # 此时 config 就是值本身，但循环结构要求它是字典，这种情况不应该发生
-                         # 但为了健壮性，我们假设它可能发生，并记录一个警告
-                         logging.warning(f"渠道 {channel_name} 的字段 '{field}' 配置格式不标准，将尝试按值处理。配置: {config}")
-                         # 在这种情况下，我们无法确定 update_value，所以跳过
-                         continue
 
+            # --- 顺序执行所有任务 ---
+            current_value = original_value
+            field_changed_in_loop = False
+            
+            for mode, update_value in tasks:
+                # 检查 update_value 是否获取成功 (对于需要值的模式)
+                if update_value is None and mode not in ["delete_keys"]:
+                    logging.warning(f"渠道 {channel_name} 的字段 '{field}' (模式: {mode}) 缺少值。跳过此子任务。")
+                    continue
 
-            # 检查 update_value 是否获取成功 (对于需要值的模式)
-            if update_value is None and mode not in ["delete_keys"]:
-                logging.warning(f"渠道 {channel_name} 的字段 '{field}' (模式: {mode}) 配置不正确：缺少 'value' 或与模式同名的键。跳过此字段。")
-                continue
+                new_value = None
+                try:
+                    # 模式 1: overwrite
+                    if mode == "overwrite":
+                        if isinstance(update_value, list):
+                            new_value = self.format_list_field_for_api(field, set(update_value))
+                        elif isinstance(update_value, dict):
+                            new_value = self.format_dict_field_for_api(field, update_value)
+                        else:
+                            new_value = update_value
 
-            new_value = None # 初始化新值
-
-            # --- 根据模式计算新值 ---
-            try:
-                # 模式 1: overwrite (默认)
-                if mode == "overwrite":
-                    # 在覆盖模式下，也需要根据值的类型进行格式化
-                    if isinstance(update_value, list):
-                        new_value = self.format_list_field_for_api(field, set(update_value)) # 转换为集合再格式化
-                    elif isinstance(update_value, dict):
-                        new_value = self.format_dict_field_for_api(field, update_value)
-                    else:
-                        new_value = update_value # 其他类型直接赋值
-
-                # 模式 2: regex_replace (支持字符串和 models 列表)
-                elif mode == "regex_replace":
-                    # 分支 A: 处理 models 列表的批量替换
-                    if field == "models" and isinstance(update_value, list):
-                        # 1. 规范化原始模型列表
-                        original_list = []
-                        if isinstance(original_value, str):
-                            original_list = [m.strip() for m in original_value.split(',') if m.strip()]
-                        elif isinstance(original_value, list):
-                            original_list = [str(m).strip() for m in original_value if str(m).strip()]
-                        
-                        # 2. 应用所有替换规则
-                        processed_list = original_list
-                        for rule in update_value:
-                            if isinstance(rule, dict) and 'pattern' in rule and 'replacement' in rule:
-                                try:
-                                    # 对列表中的每个元素应用替换
-                                    processed_list = [re.sub(rule['pattern'], rule['replacement'], model) for model in processed_list]
-                                except re.error as re_err:
-                                    logging.warning(f"渠道 {channel_name} 的字段 '{field}' 正则替换规则无效: {rule} ({re_err})。跳过此规则。")
-                                    continue
-                        
-                        # 3. 去重 (保持顺序)
-                        final_list = list(dict.fromkeys(processed_list))
-                        
-                        # 4. 格式化
-                        new_value = self.format_list_field_for_api(field, final_list)
-
-                    # 分支 B: 处理通用字符串字段的替换
-                    elif isinstance(original_value, str) and isinstance(update_value, dict) and \
-                       'pattern' in update_value and 'replacement' in update_value:
-                        try:
-                            new_value = re.sub(update_value['pattern'], update_value['replacement'], original_value)
-                        except re.error as re_err:
-                            logging.warning(f"渠道 {channel_name} 的字段 '{field}' 正则替换失败: 无效模式 '{update_value['pattern']}' 或替换 '{update_value['replacement']}' ({re_err})。跳过此字段。")
+                    # 模式 2: regex_replace
+                    elif mode == "regex_replace":
+                        if field == "models" and isinstance(update_value, list):
+                            # 规范化当前列表
+                            curr_list = []
+                            if isinstance(current_value, str):
+                                curr_list = [m.strip() for m in current_value.split(',') if m.strip()]
+                            elif isinstance(current_value, list):
+                                curr_list = [str(m).strip() for m in current_value if str(m).strip()]
+                            
+                            processed_list = curr_list
+                            for rule in update_value:
+                                if isinstance(rule, dict) and 'pattern' in rule and 'replacement' in rule:
+                                    try:
+                                        processed_list = [re.sub(rule['pattern'], rule['replacement'], model) for model in processed_list]
+                                    except re.error as re_err:
+                                        logging.warning(f"渠道 {channel_name} 的字段 '{field}' 正则替换规则无效: {rule} ({re_err})。")
+                                        continue
+                            final_list = list(dict.fromkeys(processed_list))
+                            new_value = self.format_list_field_for_api(field, final_list)
+                        elif isinstance(current_value, str) and isinstance(update_value, dict) and \
+                           'pattern' in update_value and 'replacement' in update_value:
+                            try:
+                                new_value = re.sub(update_value['pattern'], update_value['replacement'], current_value)
+                            except re.error as re_err:
+                                logging.warning(f"渠道 {channel_name} 的字段 '{field}' 正则替换失败: {re_err}")
+                                continue
+                        else:
                             continue
-                    else:
-                        logging.warning(f"渠道 {channel_name} 的字段 '{field}' 使用 regex_replace 模式，但原始值或配置值格式不支持。跳过此字段。")
-                        continue
 
-                # 模式 3: append (适用于列表/集合字段)
-                elif mode == "append":
-                    original_set = normalize_to_set(original_value) # 使用导入的函数
-                    update_set = normalize_to_set(update_value) # 使用导入的函数
-                    final_set = original_set.union(update_set)
-                    new_value = self.format_list_field_for_api(field, final_set) # 使用子类方法格式化
+                    # 模式 3: append
+                    elif mode == "append":
+                        curr_set = normalize_to_set(current_value)
+                        upd_set = normalize_to_set(update_value)
+                        new_value = self.format_list_field_for_api(field, curr_set.union(upd_set))
 
-                # 模式 4: remove (适用于列表/集合字段)
-                elif mode == "remove":
-                    if field == "models": # 特殊处理 models 字段以保持顺序
-                        original_list = []
-                        if isinstance(original_value, str):
-                            original_list = [m.strip() for m in original_value.split(',') if m.strip()]
-                        elif isinstance(original_value, list):
-                            original_list = [str(m).strip() for m in original_value if str(m).strip()]
-                        
-                        items_to_remove = []
-                        if isinstance(update_value, str):
-                            items_to_remove = [m.strip() for m in update_value.split(',') if m.strip()]
-                        elif isinstance(update_value, list):
-                            items_to_remove = [str(m).strip() for m in update_value if str(m).strip()]
-                        
-                        # 创建一个新列表，仅包含不在移除列表中的元素，并保持原始顺序
-                        final_list = [m for m in original_list if m not in items_to_remove]
-                        new_value = self.format_list_field_for_api(field, final_list) # 使用子类方法格式化，传递列表
-                    else: # 其他列表类型字段按原逻辑处理 (集合操作，不保证顺序)
-                        original_set = normalize_to_set(original_value) # 使用导入的函数
-                        remove_set = normalize_to_set(update_value) # 使用导入的函数
-                        final_set = original_set - remove_set
-                        new_value = self.format_list_field_for_api(field, final_set) # 使用子类方法格式化
+                    # 模式 4: remove
+                    elif mode == "remove":
+                        if field == "models":
+                            curr_list = []
+                            if isinstance(current_value, str):
+                                curr_list = [m.strip() for m in current_value.split(',') if m.strip()]
+                            elif isinstance(current_value, list):
+                                curr_list = [str(m).strip() for m in current_value if str(m).strip()]
+                            
+                            to_rem = []
+                            if isinstance(update_value, str):
+                                to_rem = [m.strip() for m in update_value.split(',') if m.strip()]
+                            elif isinstance(update_value, list):
+                                to_rem = [str(m).strip() for m in update_value if str(m).strip()]
+                            
+                            new_value = self.format_list_field_for_api(field, [m for m in curr_list if m not in to_rem])
+                        else:
+                            curr_set = normalize_to_set(current_value)
+                            rem_set = normalize_to_set(update_value)
+                            new_value = self.format_list_field_for_api(field, curr_set - rem_set)
 
-                # 模式 5: merge (适用于字典字段)
-                elif mode == "merge":
-                    original_dict = normalize_to_dict(original_value, field, channel_name) # 使用导入的函数
-                    update_dict = normalize_to_dict(update_value, field, channel_name) # 使用导入的函数
-                    # 创建副本以避免修改原始字典
-                    final_dict = copy.deepcopy(original_dict)
-                    final_dict.update(update_dict) # update_dict 中的键会覆盖 final_dict 中的
-                    new_value = self.format_dict_field_for_api(field, final_dict) # 使用子类方法格式化
+                    # 模式 5: merge
+                    elif mode == "merge":
+                        curr_dict = normalize_to_dict(current_value, field, channel_name)
+                        upd_dict = normalize_to_dict(update_value, field, channel_name)
+                        final_dict = copy.deepcopy(curr_dict)
+                        final_dict.update(upd_dict)
+                        new_value = self.format_dict_field_for_api(field, final_dict)
 
-                # 模式 6: delete_keys (适用于字典字段)
-                elif mode == "delete_keys":
-                    original_dict = normalize_to_dict(original_value, field, channel_name) # 使用导入的函数
-                    # delete_keys 的 value 应该是一个 key 的列表
-                    # update_value 在这里应该是要删除的键的列表
-                    if update_value is None: # 如果 value 未提供，认为不删除任何键
-                        keys_to_delete = set()
-                        logging.debug(f"渠道 {channel_name} 字段 '{field}' 的 delete_keys 模式缺少 value，不删除任何键。")
-                    else:
-                        keys_to_delete = normalize_to_set(update_value) # 使用导入的函数
+                    # 模式 6: delete_keys
+                    elif mode == "delete_keys":
+                        curr_dict = normalize_to_dict(current_value, field, channel_name)
+                        keys_to_del = normalize_to_set(update_value)
+                        final_dict = copy.deepcopy(curr_dict)
+                        for key in keys_to_del:
+                            if key in final_dict:
+                                del final_dict[key]
+                        new_value = self.format_dict_field_for_api(field, final_dict)
 
-                    # 创建副本
-                    final_dict = copy.deepcopy(original_dict)
-                    deleted_count = 0
-                    for key in keys_to_delete:
-                        if key in final_dict:
-                            del final_dict[key]
-                            deleted_count += 1
-                    logging.debug(f"渠道 {channel_name} 字段 '{field}' 的 delete_keys 模式删除了 {deleted_count} 个键。")
-                    new_value = self.format_dict_field_for_api(field, final_dict) # 使用子类方法格式化
+                    # --- 检查子任务是否产生了变化 ---
+                    formatted_new = self.format_field_value_for_api(field, new_value)
+                    formatted_curr = self.format_field_value_for_api(field, current_value)
+                    
+                    is_changed = False
+                    if formatted_new is None and formatted_curr: is_changed = True
+                    elif formatted_curr is None and formatted_new: is_changed = True
+                    elif isinstance(formatted_curr, list) and isinstance(formatted_new, list):
+                        if sorted(formatted_curr) != sorted(formatted_new): is_changed = True
+                    elif formatted_curr != formatted_new: is_changed = True
 
-                else:
-                     logging.warning(f"渠道 {channel_name} 的字段 '{field}' 配置了未知模式 '{mode}'。跳过此字段。")
-                     continue
+                    if is_changed:
+                        current_value = formatted_new
+                        field_changed_in_loop = True
 
-                # --- 检查值是否实际改变 ---
-                # 对比 new_value 和 original_value 是否真的不同
-                is_changed = False
-                # 优化比较逻辑：先进行最终格式化，再比较
-                formatted_new_value = self.format_field_value_for_api(field, new_value)
-                formatted_original_value = self.format_field_value_for_api(field, original_value) # 也对原始值格式化
-
-                # 特殊处理 None 和空字符串/列表/字典的比较
-                if formatted_new_value is None and isinstance(formatted_original_value, (str, list, dict)) and not formatted_original_value:
-                    is_changed = False # None 等同于空结构
-                elif formatted_original_value is None and isinstance(formatted_new_value, (str, list, dict)) and not formatted_new_value:
-                     is_changed = False # 空结构等同于 None
-                elif isinstance(formatted_original_value, list) and isinstance(formatted_new_value, list):
-                     # 对于列表，考虑顺序不敏感的比较？目前使用严格比较
-                     if sorted(formatted_original_value) != sorted(formatted_new_value): # 排序后比较
-                          is_changed = True
-                elif isinstance(formatted_original_value, dict) and isinstance(formatted_new_value, dict):
-                     # 对于字典，直接比较
-                     if formatted_original_value != formatted_new_value:
-                          is_changed = True
-                elif formatted_original_value != formatted_new_value:
-                     # 其他类型直接比较
-                     is_changed = True
-
-
-                if is_changed:
-                    payload[field] = formatted_new_value # 使用格式化后的值
-                    changed_fields.add(field)
-                    logging.debug(f"渠道 {channel_name} 的字段 '{field}' 准备更新: {repr(formatted_original_value)} -> {repr(payload[field])} (模式: {mode})")
-                else:
-                    logging.debug(f"渠道 {channel_name} 的字段 '{field}' 值未改变 ({repr(formatted_original_value)} -> {repr(formatted_new_value)})，跳过。")
-
-            except Exception as e:
-                logging.error(f"为渠道 {channel_name} 处理字段 '{field}' (模式: {mode}) 时发生错误: {e}", exc_info=True)
-                continue # 跳过这个字段的更新
+                except Exception as e:
+                    logging.error(f"处理渠道 {channel_name} 字段 '{field}' (模式: {mode}) 时出错: {e}")
+                    continue
+            
+            if field_changed_in_loop:
+                payload[field] = current_value
+                changed_fields.add(field)
 
         if not changed_fields:
             logging.debug(f"渠道 {channel_name} (ID: {channel_id}) 没有需要更新的字段。")
